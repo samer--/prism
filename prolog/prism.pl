@@ -104,7 +104,7 @@ Types used in this module:
 prism_goal   % a callable term
 prism_state  % term describing state of PRISM 
 filename     % a literal absolute or relative filename 
-filepath     % path to file using search path mechanism.
+filespec     % path to file using search path mechanism.
 ==
 
 @tbd Add some sample PRISM programs and utilities.
@@ -128,7 +128,7 @@ filepath     % path to file using search path mechanism.
 
 % ---------------------- SESSION CONTROL----------------------------------
 
-%% prism_start(+Exec:atom, +LogFile:filename) is det.
+%% prism_start(+Exec:filespec, +LogFile:filename) is det.
 %% prism_start(+LogFile:filename) is det.
 %% prism_start is det.
 %
@@ -354,8 +354,8 @@ divby(N,X,Y) :- Y is X/N.
 %  Compile and link a B-Prolog source file.
 load_bprolog(Name)  :- prism(cl(Name)), assert(current_prism_file(cl(Name))).
 
-%% load_prism( +Name:filepath, +Opts:list(oneof([neg]))) is det.
-%% load_prism( +Name:filepath) is det.
+%% load_prism( +Name:filespec, +Opts:list(oneof([neg]))) is det.
+%% load_prism( +Name:filespec) is det.
 %
 %  Compile and link a PRISM source file. If file extension is 
 %  ommitted, then '.psm' is assumed. There is only one option currently:
