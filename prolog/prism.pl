@@ -321,17 +321,20 @@ prism_state_set(ps(SX,PX,CX,FX,VX,DX)) :-
 	maplist(set_switch,PX), % set switch probabilities
 	maplist(set_switch,CX). % set switch pseudocounts
 
-sw_info(probs,sw(I,_),sw(I,p,P)) :- prism_nd(get_sw(I,[F,_,PX])) *-> P=set(F,PX); P=unset.
-sw_info(counts,sw(I,_),sw(I,a,C)) :- prism_nd(get_sw_a(I,[F,_,CX])) *-> C=set(F,CX); C=unset.
-sw_info(exponents,sw(I,_),sw(I,h,C)) :- prism_nd(get_sw_d(I,[F,_,CX])) *-> C=set(F,CX); C=unset.
+sw_info(probs,     sw(I,_), sw(I,p,P)) :- prism_nd(get_sw(I,[F,_,PX]))   *-> P=set(F,PX); P=unset.
+sw_info(counts,    sw(I,_), sw(I,a,C)) :- prism_nd(get_sw_a(I,[F,_,CX])) *-> C=set(F,CX); C=unset.
+sw_info(exponents, sw(I,_), sw(I,h,C)) :- prism_nd(get_sw_d(I,[F,_,CX])) *-> C=set(F,CX); C=unset.
 
-set_switch(sw(_,_,unset)) :- !. % no way to explicity un-set parameters
-set_switch(sw(I,p,set(F,P))) :- !, prism(get_sw(I,P)), (F=fixed->prism(fix_sw(I));prism(unfix_sw(I))).
+set_switch(sw(_,_,unset)) :- !. % no way to explicitly un-set parameters
+set_switch(sw(I,p,set(F,P))) :- !, 
+   prism(get_sw(I,P)), 
+   (F=fixed -> prism(fix_sw(I)); prism(unfix_sw(I))).
 set_switch(sw(I,a,set(F,C))) :- !, 
-   prism(set_sw_a(I,C)), (F=fixed_a->prism(fix_sw_a(I));prism(unfix_sw_a(I))).
+   prism(set_sw_a(I,C)), 
+   (F=fixed_a -> prism(fix_sw_a(I)); prism(unfix_sw_a(I))).
 set_switch(sw(I,h,set(F,C))) :- !, 
-   maplist(add(1),C,A), prism(set_sw_a(I,A)), % use set_sw_a incase pseudocounts are negative
-   (F=fixed_a->prism(fix_sw_a(I));prism(unfix_sw_a(I))).
+   maplist(add(1),C,A), % incr and use set_sw_a incase pseudocounts are negative
+   set_switch(sw(I,a,set(F,A))).
 set_switch(I) :- format('*** unrecognised switch setting: ~q.\n',[I]).
 
 check(G) :- call(G) -> true; format('*** check failed: ~w.\n',[G]), fail.
@@ -403,7 +406,7 @@ sw_get(T,S,I)  :- sw_values(S,V), sw_info(T,sw(S,V),sw(_,_,I)).
 %    Sets probabilities for all switchs that unify with S
 %  * all_counts
 %    Sets counts for all switchs that unify with S
-sw_set(dist,S,H)  :- stoch(H,V,_), prism(get_sw(S,V)).
+sw_set(dist,S,H)  :- stoch(H,V,_), prism(set_sw(S,V)).
 sw_set(probs,S,V)  :- prism(get_sw(S,V)).
 sw_set(counts,S,V) :- prism(set_sw_a(S,V)).
 sw_set(all_probs,S,V) :- prism(set_sw_all(S,V)).
