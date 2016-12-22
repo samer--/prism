@@ -75,10 +75,10 @@ This module provides access PRISM, a Prolog-based probabilistic programming
 system. PRISM runs under B-Prolog, so this module provides ways to manage
 and communicate with a PRISM/B-Prolog child process.
 
-Much of this can be seen as an effort to make the interface less stateful.
-Currently, the state of the probabilistic switches (distributions and pseudocounts) 
-is the main piece of state. Most of the flags that affect learning and inference 
-are managed explicitly and statelessly by the relevant procedures.
+Most of the flags that affect learning and inference 
+are managed explicitly and statelessly by the relevant procedures. The states of
+switches (distributions and pseudocounts) must still be managed by the user,
+but they can easily be maniplated using sw_get/3 and sw_set/3.
 
 Flags which are still effective statefully are:
 	- flags to do with information and progress display
@@ -86,6 +86,18 @@ Flags which are still effective statefully are:
 	- explanation graph housekeeping
 	- sort_hindsight
 	- log_scale affects explanation, viterbi and learning
+
+Starting PRISM
+
+==
+?- use_module(library(prism)).
+?- prism_start(path(prism),'prism.log').
+?- #X is 2+2. % as PRISM - sanity check
+?- load_prism('some_test_program.psm').
+?- prism_show(_). % check prism.log for output
+==
+You may find it useful to run =|tail -f prism.log|= in a terminal to keep
+an eye on PRISMs output messages.
 
 Types used in this module:
 ==
@@ -95,6 +107,7 @@ filename     % a literal absolute or relative filename
 filepath     % path to file using search path mechanism.
 ==
 
+@tbd Add some sample PRISM programs and utilities.
 */
 :- use_module(library(plrand), [with_rnd_state/1]).
 
