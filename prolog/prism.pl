@@ -4,7 +4,7 @@
 	,	prism_restart/0
 	,	prism_recover/0
 	,	prism_close/0
-   ,  prism_current/2
+   ,  prism_is_running/0
 
 	% state
 	,	prism_state_get/1
@@ -148,11 +148,10 @@ set_streams(In,Out,Descriptor) :-
 	set_prolog_flag(float_format,'%.15g'). % for accurate exchange of floats
 
 
-%% prism_current(-Exec,-Args) is semidet.
+%% prism_is_running is semidet.
 %
-%  Succeeds if an instance of prism is running and binds Exec and Args
-%  to the values required to restart it.
-prism_current(Exec, Args) :- current_prism(child(Exec,Args,_),_,_).
+%  Succeeds if an instance of prism is running. 
+prism_is_running :- current_prism(_,_,_).
 
 %% prism_restart is det.
 %
