@@ -290,7 +290,7 @@ prism_state_get(ps(SX,PX,CX,FX,VX,DX)) :-
 	prism(findall(sw(I,p,set(F,P)),(get_reg_sw(I),get_sw(I,[F,_,P])),PX)),   % all switch probabilities
    % !! NB I changed this from h to a as h is a synonym for d, not a
 	prism(findall(sw(I,a,set(F,C)),(get_reg_sw(I),get_sw_a(I,[F,_,C])),CX)), % all switch pseudocounts
-	prism(findall(flag(F,V), prism_flag_get(F,V),FX)), % all prism flags
+	prism(findall(flag(F,V), get_prism_flag(F,V),FX)), % all prism flags
 	findall( dyn(FF,AA,CCX), (
 			prism_dynamic(FF,AA), functor(PP,FF,AA),
 			prism(findall(PP,PP,CCX))
@@ -715,13 +715,13 @@ set_prism_option(Name,Val) :- prism_flag_set(Name,Val).
 
 %% prism_flag_set( +Name, +Value) is det.
 %  Set value of the named PRISM flag.
-prism_flag_set(F,V) :- prism(prism_flag_set(F,V)).
+prism_flag_set(F,V) :- prism(set_prism_flag(F,V)).
 
 %% prism_flag_get( +Name, -Value) is det.
 %% prism_flag_get( -Name, -Value) is nondet.
 %
 %  Get value of the named PRISM flag or of all flags in turn.
-prism_flag_get(F,V) :- prism_nd(prism_flag_get(F,V)).
+prism_flag_get(F,V) :- prism_nd(get_prism_flag(F,V)).
 
 %% prism_flag( +Name, -Type, -Description) is det.
 %% prism_flag( ?Name, ?Type, ?Description) is nondet.
