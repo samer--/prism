@@ -110,6 +110,7 @@ filespec     % path to file using search path mechanism.
 @tbd Add some sample PRISM programs and utilities.
 */
 :- use_module(library(plrand), [with_rnd_state/1]).
+:- use_module(library(typedef)).
 
 :- dynamic current_prism/3.
 :- dynamic current_prism_file/1.
@@ -120,6 +121,36 @@ filespec     % path to file using search path mechanism.
    directory_file_path(Dir,'psm',PSM),
    assert(user:file_search_path(prism,PSM)).
 
+% ------------------------------- TYPES ----------------------------------
+
+:- type pair(A,B) ---> A-B.
+:- type prism_goal == callable.
+:- type flag(_)    == atom. % not specified any further 
+:- type switch(_)  == term. % not specified any further 
+:- type switch     == switch(_). 
+:- type param_type ---> probs; counts.
+:- type fixness    ---> fixed; unfixed.
+:- type switch_params == pair(fixness, list(float)).
+
+:- type switch_distribution ---> default
+                               ; uniform
+                               ; f_geometric
+                               ; f_geometric(natural)
+                               ; f_geometric(natural, oneof([asc,desc])).
+
+:- type prism_state ---> ps( list(switch_values) % ordinary switches with values
+                           , list(switch_spec)   % switch probabilities
+                           , list(switch_spec)   % switch pseudocounts
+                           , list(flag_value)    % flags and values
+                           , list(switch_values) % switches with dynamic values
+                           , list(dynamic_pred)  % dynamic predicates
+                           ).
+
+:- type switch_values ---> sw(switch(A), list(A)).
+:- type switch_state  ---> unset; set(fixness, list(float)).
+:- type switch_spec   ---> sw(switch(_), oneof([p,a]), switch_state).
+:- type flag_value    ---> flag(flag(A), A).
+:- type dynamic_pred  ---> dyn(atom, natural, list(term)).
 
 
 % ------------------------------------------------------------------------
@@ -263,6 +294,11 @@ prism(Goal) :-
 	once((repeat,recv(term(query(Id,Vars,Reply),_)))),
 	interp(Reply).
 
+interp(true).
+interp(fail) :- !, fail.
+interp(throw(Ex)) :- throw(Ex). %format('PRISM exception: ~w.\n',[Ex]).
+
+
 %% prism_nd( Goal:prism_goal) is nondet.
 %
 %  Submit nondeterministic query to PRISM. The goal in run in PRISM via
@@ -278,7 +314,6 @@ prism_nd(Q) :- term_variables(Q,V), prism(findall(V,Q,VX)), member(V,VX).
 %% ##(Goal:prism_goal) is semidet.
 %  Unary prefix operator, equivalent to prism_nd/1.
 ##(G) :- prism_nd(G).
-
 
 
 % ------------------------------------------------------------------------
@@ -321,19 +356,10 @@ prism_state_set(ps(SX,PX,CX,FX,VX,DX)) :-
 	maplist(set_switch,PX), % set switch probabilities
 	maplist(set_switch,CX). % set switch pseudocounts
 
-sw_info(probs,     sw(I,_), sw(I,p,P)) :- prism_nd(get_sw(I,[F,_,PX]))   *-> P=set(F,PX); P=unset.
-sw_info(counts,    sw(I,_), sw(I,a,C)) :- prism_nd(get_sw_a(I,[F,_,CX])) *-> C=set(F,CX); C=unset.
-sw_info(exponents, sw(I,_), sw(I,h,C)) :- prism_nd(get_sw_d(I,[F,_,CX])) *-> C=set(F,CX); C=unset.
-
-set_switch(sw(_,_,unset)) :- !. % no way to explicitly un-set parameters
-set_switch(sw(I,p,set(F,P))) :- !, 
-   prism(get_sw(I,P)), 
-   (F=fixed -> prism(fix_sw(I)); prism(unfix_sw(I))).
-set_switch(sw(I,a,set(F,C))) :- !, 
-   prism(set_sw_a(I,C)), 
-   (F=fixed_a -> prism(fix_sw_a(I)); prism(unfix_sw_a(I))).
+set_switch(sw(I,p,set(F,P))) :- !, sw_set(probs,I,F-P).
+set_switch(sw(I,a,set(F,C))) :- !, sw_set(counts,I,F-C).
 set_switch(sw(I,h,set(F,C))) :- !, 
-   maplist(add(1),C,A), % incr and use set_sw_a incase pseudocounts are negative
+   maplist(add(1),C,A), % incr and use set_sw_a in case pseudocounts are negative
    set_switch(sw(I,a,set(F,A))).
 set_switch(I) :- format('*** unrecognised switch setting: ~q.\n',[I]).
 
@@ -378,60 +404,45 @@ load_prism(Name,Opts) :-
 
 % ---------------------- MANAGING SWITCHES ----------------------------
 
-%% sw_values(+S:switch,-V:list(A)) is semidet.
-%% sw_values(-S:switch,-V:list(A)) is nondet.
+%% sw_values(+S:switch(A),-V:list(A)) is semidet.
+%% sw_values(-S:switch(A),-V:list(A)) is nondet.
 %  True when S is a registered switch and V is its list of values.
-sw_values(S,V)    :- prism_nd((get_reg_sw(S),get_values1(S,V))).
+sw_values(S,V) :- prism_nd(get_reg_sw(S)), prism(get_values1(S,V)).
 
-%% sw_get(+Spec:oneof([probs,counts]), +S:switch, -I:switch_info) is det.
-%% sw_get(-Spec:oneof([probs,counts]), -S:switch, -I:switch_info) is nondet.
+%% sw_get(+PType:param_type, +S:switch, -I:switch_params) is semidet.
+%% sw_get(-PType:param_type, -S:switch, -I:switch_params) is nondet.
 %
-%  Gets information on probability distribution or pseudocounts for
-%  a switch. The returned switch_info type is
-%  ==
-%  switch_info ---> unset ; set(oneof([fixed,unfixed]), list(float)).
-%  ==
-sw_get(T,S,I)  :- sw_values(S,V), sw_info(T,sw(S,V),sw(_,_,I)).
+%  Gets information on probability distribution or pseudocounts for a switch. 
+%  Fails if the switch parameters are unset. 
+sw_get(T,S,F-Vals)  :- getter(T,S,Vals,F,G), prism_nd(get_reg_sw(S)), prism(G).
 
-%% sw_set(+Spec, +S:switch, +H:list(float)) is det.
+%% sw_set(+PType:param_type, +S:switch, +H:switch_params) is det.
 %
-%  Set a switch's parameters depending on Spec, which can be:
-%  * dist 
-%    H is an unnormalised distribution. It will be normalised.
-%  * probs 
-%    H is a normalised distribution, and will be installed.
-%  * counts 
-%    H will be set as the switch's pseudocounts.
-%  * all_probs
-%    Sets probabilities for all switchs that unify with S
-%  * all_counts
-%    Sets counts for all switchs that unify with S
-sw_set(dist,S,H)  :- stoch(H,V,_), prism(set_sw(S,V)).
-sw_set(probs,S,V)  :- prism(get_sw(S,V)).
-sw_set(counts,S,V) :- prism(set_sw_a(S,V)).
-sw_set(all_probs,S,V) :- prism(set_sw_all(S,V)).
-sw_set(all_counts,S,V) :- prism(set_sw_all_a(S,V)).
+%  Set a switch's parameters depending on PType.
+sw_set(Type,S,F-V)  :- setter(Type,S,V,Setter), fixer(Type,S,F,Fixer), prism((Setter,Fixer)).
 
-%% sw_fix(+Spec:oneof([prob,counts]), S:switch) is det.
+%% sw_fix(+PType:param_type, S:switch) is det.
 %  Fixes the distribution or pseudocounts for the named switch.
 %  This prevents the setting from changing during learning.
-sw_fix(probs,S)    :- prism(fix_sw(S)).
-sw_fix(counts,S)    :- prism(fix_sw_a(S)).
+sw_fix(Type,S)   :- fixer(Type, S, fixed, G), prism(G).
 
-%% sw_unfix(+Spec:oneof([prob,counts]), S:switch) is det.
+%% sw_unfix(+PType:param_type, S:switch) is det.
 %  Unfixes the distribution or pseudocounts for the named switch.
 %  This allows the setting to change during learning.
-sw_unfix(probs,S)  :- prism(unfix_sw(S)).
-sw_unfix(counts,S)  :- prism(unfix_sw_a(S)).
+sw_unfix(Type,S)   :- fixer(Type, S, unfixed, G), prism(G).
 
 
-%% switch_distribution(-Type) is nondet.
-%  Table of distribution types for switch setting. 
-switch_distribution(default).
-switch_distribution(uniform).
-switch_distribution(f_geometric).
-switch_distribution(f_geometric(natural)).
-switch_distribution(f_geometric(natural,oneof([asc,desc]))).
+% tables of PRISM commands
+setter(probs,  S, V, set_sw(S,V)).
+setter(counts, S, V, set_sw_a(S,V)).
+
+getter(probs, S, V, F, get_sw(S,[F,_,V])).
+getter(counts, S, V, F, get_sw_a(S,[F,_,V])).
+
+fixer(probs,  S, fixed,   fix_sw(S)).
+fixer(probs,  S, unfixed, unfix_sw(S)).
+fixer(counts, S, fixed,   fix_sw_a(S)).
+fixer(counts, S, unfixed, unfix_sw_a(S)).
 
 %% sw_set_to_mean(+S:switch) is det.
 %% sw_set_to_mean(+S:switch,+Offset:float) is det.
@@ -439,12 +450,14 @@ switch_distribution(f_geometric(natural,oneof([asc,desc]))).
 %  Sets a switch's distribution to the mean of the
 %  Dirichlet distribution whose parameters come from the
 %  current 'counts' setting of the switch. Off, if present, is 
-%  added to all the pseudocounts.
+%  added to all the pseudocounts. Also sets the probabilities'
+%  'fixed' states to match that of the pseudocounts.
 sw_set_to_mean(S) :- sw_set_to_mean(S,0).
 sw_set_to_mean(S,Off) :-
-	sw_get(counts,S,set(_,D)),
+	sw_get(counts,S,F-D),
 	maplist(add(Off+1),D,A),
-	sw_set(dist,S,A).
+   stoch(A,Probs,_),
+	sw_set(probs,S,F-Probs).
 
 %% sw_set_to_sample(+S:switch) is det.
 %% sw_set_to_sample(+S:switch, Offset:float) is det.
@@ -456,7 +469,7 @@ sw_set_to_mean(S,Off) :-
 %  sample_Dirichlet/5 predicate from library(plrand).
 sw_set_to_sample(S) :- sw_set_to_sample(S,0).
 sw_set_to_sample(S,Off) :-
-	sw_get(counts,S,set(_,D)),
+	sw_get(counts,S,_-D),
 	maplist(add(Off+1),D,A),
    length(A,N),
 	with_rnd_state(plrand:sample_Dirichlet(N,A,P)),
@@ -503,7 +516,7 @@ explain_probs(outside,Q,G)  :- prism(probfo(Q,G)).
 explain_probs(viterbi,Q,G)  :- prism(probfv(Q,G)).
 explain_probs(in_out,Q,G)   :- prism(probfio(Q,G)).
 
-%% hindsight(TopGoal:prism_goal, SubGoal:prism_goal,-Probs:list(pair(prism_goal,nonneg))) is nondet.
+%% hindsight(TopGoal:prism_goal, SubGoal:prism_goal,-Probs:list(pair(prism_goal,float))) is nondet.
 %
 % Computes probabilities of subgoals unifying with SubGoal for a given top goal. Matches
 % different subgoals on backtracking.
@@ -511,20 +524,20 @@ explain_probs(in_out,Q,G)   :- prism(probfio(Q,G)).
 hindsight(Q,R,P) :-      prism(hindsight(Q,R,P1)), member([R,P],P1).
 chindsight(Q,R,P) :-     prism(chindsight(Q,R,P1)), member([R,P],P1).
 
-%% hindsight_agg(TopGoal:prism_goal, SubGoal:prism_goal,-Probs:list(list(pair(prism_goal,nonneg)))) is det.
+%% hindsight_agg(TopGoal:prism_goal, SubGoal:prism_goal,-Probs:list(list(pair(prism_goal,float)))) is det.
 %
 % Computes total probability of all subgoals unifying with SubGoal for a given top goal.
 % NB. this functionality can be replicated in a more idiomatic way using hindsight/3 and
 % SWI Prolog's library(aggregate).
 hindsight_agg(Q,R,P) :- prism(hindsight_agg(Q,R,P1)), maplist((maplist(list_pair)),P1,P).
 
-%% chindsight(TopGoal:prism_goal, SubGoal:prism_goal,-Probs:list(pair(prism_goal,nonneg))) is nondet.
+%% chindsight(TopGoal:prism_goal, SubGoal:prism_goal,-Probs:list(pair(prism_goal,float))) is nondet.
 %
 % Computes conditional probabilities of matching subgoals given that the top goal is true.
 % Same as hindsight/3 but with probabilities divided by the probabality of the top goal.
 % chindsight(Q,R,P)     :- prism(chindsight(Q,R,P1)), maplist(list_pair,P1,P).
 
-%% chindsight_agg(TopGoal:prism_goal, SubGoal:prism_goal,-Probs:list(list(pair(prism_goal,nonneg)))) is det.
+%% chindsight_agg(TopGoal:prism_goal, SubGoal:prism_goal,-Probs:list(list(pair(prism_goal,float)))) is det.
 %
 % Computes aggregate conditional probability of matching subgoals given that the top goal is true.
 % Same as chindsight_agg/3 but with probabilities divided by the probabality of the top goal.
@@ -728,23 +741,23 @@ set_prism_option(Name,Val) :- prism_flag_set(Name,Val).
 % --------------------- PRISM FLAGS ---------------------------
 
 
-%% prism_flag_set( +Name, +Value) is det.
+%% prism_flag_set( +Name:flag(A), +Value:A) is det.
 %  Set value of the named PRISM flag.
 prism_flag_set(F,V) :- prism(set_prism_flag(F,V)).
 
-%% prism_flag_get( +Name, -Value) is det.
-%% prism_flag_get( -Name, -Value) is nondet.
+%% prism_flag_get( +Name:flag(A), -Value:A) is det.
+%% prism_flag_get( -Name:flag(A), -Value:A) is nondet.
 %
 %  Get value of the named PRISM flag or of all flags in turn.
 prism_flag_get(F,V) :- prism_nd(get_prism_flag(F,V)).
 
-%% prism_flag( +Name, -Type, -Description) is det.
-%% prism_flag( ?Name, ?Type, ?Description) is nondet.
+%% prism_flag( +Name:flag(A), -A:type, -Description) is det.
+%% prism_flag( ?Name:flag(A), ?A:type, ?Description) is nondet.
 %
 %  Contains information about all the PRISM flags.
 
 % cosmetic - affect display only
-prism_flag( warn,       	oneof([on,off]), 'controls display of warning messages').
+prism_flag( warn,       	   oneof([on,off]), 'controls display of warning messages').
 prism_flag( verb,      		   oneof([none,graph,em,full]), 'control verbosity in learning').
 prism_flag( show_itemp,       oneof([on,off]), 'print inverse temperature rate in DAEM algorithm').
 prism_flag( search_progress, 	natural,         'frequency of message printing in explanation finding').
@@ -757,9 +770,7 @@ prism_flag( write_call_events,  oneof([none, off, all, _]), 'no idea').
 % model initialisation
 prism_flag( default_sw_a,  oneof([none,uniform,uniform(nonneg)]), 'default values for switch pseudo-counts').
 prism_flag( default_sw_d,  oneof([none,uniform,uniform(nonneg)]), 'default values for switch pseudo-counts').
-prism_flag( default_sw, 	
-	[none, uniform, f_geometric, f_geometric(natural), f_geometric(natural,oneof([asc,desc]))], 
-	'default distribution for new switches').
+prism_flag( default_sw, 	switch_distribution,                   'default distribution for new switches').
 
 % affect inference, explanation generation
 prism_flag( clean_table, 	oneof([on,off]), 'dispose of explanation table after use').
@@ -796,7 +807,7 @@ prism_flag( mcmc_b,    	   natural,         'MCMC burn in').
 prism_flag( mcmc_e,    	   natural,         'MCMC chain length').
 prism_flag( mcmc_s,    	   natural,         'MCMC cycle length').
 
-%% prism_flag_affects(-Name, -Subsystem) is nondet.
+%% prism_flag_affects(-Name:flag(_), -Subsystem) is nondet.
 %
 %  Relation between flag names and the subsytem affected, which
 %  can be one of display, initialisation (of switches), explanation,
@@ -849,7 +860,7 @@ prism_flag_affects( mcmc_s,         learning).
 %
 %  Causes PRISM to print information to its output stream.
 %  By default, this appears in a file 'prism.log' in the directory
-%  where PRISM was started..
+%  where PRISM was started.
 prism_show(values) :- prism_flush(show_values).
 prism_show(probs)  :- prism_flush(show_sw).
 prism_show(counts) :- prism_flush(show_sw_a).
@@ -877,11 +888,6 @@ prism_statistics(graph,S,V) :- prism_nd(graph_statistics(S,V)).
 
 
 % ------------------ SUPPORT PREDICATES -----------------------
-
-
-interp(true).
-interp(fail) :- !, fail.
-interp(throw(Ex)) :- throw(Ex). %format('PRISM exception: ~w.\n',[Ex]).
 
 
 send(Term) :-
