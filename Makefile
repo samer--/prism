@@ -7,3 +7,4 @@ publish:
 all:
 check:
 install:
+distclean:
